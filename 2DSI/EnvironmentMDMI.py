@@ -22,10 +22,14 @@ class EnvironmentMDMI():
         self.dcount = Config.DEFENDER_COUNT
         self.icount = Config.INTRUDER_COUNT
 
+        self.lock = Value('i', 1)
+
+        self.episode_count = Value('i', 0)
+
         self.init_dstates = []
         self.init_istates = []
         for d in range(self.dcount):
-            self.init_dstates.append((-5+8*d, 7-d, 0))
+            self.init_dstates.append((-5+12*d, 7-3*d, 0))
         for i in range(self.icount):
             self.init_istates.append((5-2*i, 10+i, 0))
 
@@ -33,16 +37,15 @@ class EnvironmentMDMI():
         self.istates = Array(state_structure, self.init_istates)
 
         self.done = Value('i', 0)
-        self.stats = ProcessStats(self)
 
         # defenders and intruders
         self.defenders = [] # all the defender objectives
         self.intruders = []
         for i in range(self.icount):
-            self.intruders.append(ProcessIntruder(self, i, self.istates[i], self.stats.episode_log_q))
+            self.intruders.append(ProcessIntruder(self, i, self.istates[i], self.episode_count))
             self.intruders[i].daemon = True
         for d in range(self.dcount):
-            self.defenders.append(ProcessDefender(self, d, self.dstates[d], self.stats.episode_log_q))
+            self.defenders.append(ProcessDefender(self, d, self.dstates[d], self.episode_count))
             self.defenders[d].daemon = True
 
     def reset(self):
@@ -50,16 +53,13 @@ class EnvironmentMDMI():
         for d in range(self.dcount):
             self.defenders[d].state.x = self.init_dstates[d][0]
             self.defenders[d].state.y = self.init_dstates[d][1]
-        for i in range(self.icount):
-            self.intruders[i].state.x = self.init_istates[i][0]
-            self.intruders[i].state.y = self.init_istates[i][1]
-        # reset done
-        for d in range(self.dcount):
-            self.defenders[d].state.done = self.init_dstates[d][2]
+            self.defenders[d].state.done = 0
             self.defenders[d].capture_buffer.value = 0
             self.defenders[d].enter_buffer.value = 0
         for i in range(self.icount):
-            self.intruders[i].state.done = self.init_istates[i][2]
+            self.intruders[i].state.x = self.init_istates[i][0]
+            self.intruders[i].state.y = self.init_istates[i][1]
+            self.intruders[i].state.done = 0
             self.intruders[i].captured.value = 0
             self.intruders[i].entered.value = 0
 
@@ -80,7 +80,6 @@ class EnvironmentMDMI():
 
     def main(self):
         # start the processes
-        self.stats.start()
         for i in range(self.icount):
             self.intruders[i].start()
             self.intruders[i].predictor.start()
@@ -90,12 +89,16 @@ class EnvironmentMDMI():
             self.defenders[d].predictor.start()
             self.defenders[d].trainer.start()
 
+        self.lock.value = 0
         # reset environment when all players are done, untill the max episode is reached
-        while self.stats.episode_count.value < Config.EPISODES:
-            # print(self.stats.episode_count)
-            # print('I am running, intruder.done = ', self.intruders[0].state.done)
+        while self.episode_count.value < Config.EPISODES:
             if self.is_game_done():
+                self.lock.value = 1
                 self.reset()
+                for d in range(self.dcount):
+                    print(self.dstates[d].x, self.dstates[d].y)
+                time.sleep(1)
+                self.lock.value = 0
 
         # quit all the processes
         for d in range(self.dcount):
@@ -104,5 +107,3 @@ class EnvironmentMDMI():
         for i in range(self.icount):
             self.intruders[i].exit_flag.value = 1
             self.intruders[i].join()
-        self.stats.exit_flag.value = 1
-        self.stats.join()

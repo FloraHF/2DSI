@@ -1,4 +1,9 @@
-from multiprocessing import Process, Queue, Value
+import sys
+if sys.version_info >= (3,0):
+    from queue import Queue as queueQueue
+else:
+    from Queue import Queue as queueQueue
+from multiprocessing import Process, Queue, Value, Lock
 from datetime import datetime
 import time
 
@@ -13,14 +18,16 @@ from ThreadPredictor import ThreadPredictor
 
 class ProcessPlayer(Process):
     """docstring for ProcessPlayer."""
-    def __init__(self, env, id, state, episode_log_q):
+    def __init__(self, env, id, state, episode_count):
         super(ProcessPlayer, self).__init__()
 
         self.env = env
         self.id = id
         self.state = state
+        self.local_episode_count = 0
 
-        self.episode_log_q = episode_log_q
+        self.global_episode_count = episode_count
+        self.lock = Lock()
         self.prediction_q = Queue(maxsize=Config.MAX_QUEUE_SIZE)
         self.training_q = Queue(maxsize=Config.MAX_QUEUE_SIZE)
         self.wait_q = Queue(maxsize=1)
@@ -58,8 +65,8 @@ class ProcessPlayer(Process):
         action, value = self.wait_q.get()
         return action, value
 
-    def train_model(self, x, a, y, r):
-        self.model.train(x, a, y, r)
+    def train_model(self, x, a, r):
+        self.model.train(x, a, r)
 
     @staticmethod
     def _accumulate_rewards(experiences, discount_factor, terminal_reward):
@@ -73,10 +80,8 @@ class ProcessPlayer(Process):
     def convert_exp(self, experiences):
         x_ = np.array([exp.previous_state for exp in experiences])
         a_ = np.array([exp.action for exp in experiences])
-        y_ = np.array([exp.current_state for exp in experiences])
         r_ = np.array([exp.reward for exp in experiences])
-        # print(x_, r_, a_)
-        return x_, a_, y_, r_
+        return x_, a_, r_
 
     def convert_state(self, dstate, istate):
         state = np.empty((Config.PLAYER_DIMENSION*(self.env.dcount+self.env.icount)))
@@ -101,14 +106,15 @@ class ProcessPlayer(Process):
         moves = 0
         while not self.state.done:
             moves += 1
-            action, value = self.predict(previous_state)
+            # print(self.role, self.id, previous_state)
+            action, value = self.predict(previous_state[np.newaxis,:])
             reward = self.step(action)
             current_state = self.convert_state(self.env.dstates, self.env.istates)
             if Config.PLAY_MODE:
                 self.trj_log_q.put((self.role, self.id, self.state.x, self.state.y, action, reward))
             reward_sum += reward
-            # if moves % 20 == 0 or self.state.done:
-            #     print(self.role, self.id, self.state.x, self.state.y, self.state.done)
+            # if (moves % 30 == 0 or self.state.done) and self.role == 'defender' and self.id == 0:
+            #     print(self.role, self.id, self.state.x, self.state.y, action, self.state.done)
             # very first step
             if not len(experiences):
                 exp = Experience(previous_state, action, current_state, reward)
@@ -119,10 +125,11 @@ class ProcessPlayer(Process):
             experiences[-1].reward = reward
             exp = Experience(previous_state, action, current_state, reward)
             experiences.append(exp)
+            previous_state = current_state
             updated_exps = ProcessPlayer._accumulate_rewards(experiences, self.discount_factor, value)
-            x_, a_, y_, r_ = self.convert_exp(updated_exps)
-
-            yield x_, a_, y_, r_, reward_sum
+            x_, a_, r_ = self.convert_exp(updated_exps)
+            # print('r', r_)
+            yield x_, a_, r_, reward_sum
 
             reward_sum = 0
             experiences = [experiences[-1]]
@@ -132,13 +139,54 @@ class ProcessPlayer(Process):
         time.sleep(np.random.rand())
         np.random.seed(np.int32(time.time() % 1 * 1000 + self.id * 10))
 
-        while self.exit_flag.value == 0:
+        with open(Config.RESULTS_FILENAME+self.role+str(self.id)+'.txt', 'a') as results_logger:
+        # results logger
+            rolling_reward = 0
+            results_q = queueQueue(maxsize=Config.STAT_ROLLING_MEAN_WINDOW)
+            self.start_time = time.time()
+            first_time = datetime.now()
 
-            total_reward = 0
-            total_length = 0
-            for x_, a_, y_, r_, reward_sum in self.run_episode():
-                total_reward += reward_sum
-                total_length += len(r_) + 1  # +1 for last frame that we drop
-                self.training_q.put((x_[0], a_[0], y_[0], r_[0]))
-            self.episode_log_q.put((datetime.now(), self.role, self.id, total_reward, total_length))
-            time.sleep(2)
+            while self.exit_flag.value == 0:
+
+                if self.state.done:
+                    continue
+                if self.env.lock.value:
+                    continue
+
+                print('learning')
+                total_reward = 0
+                total_length = 0
+
+                if self.local_episode_count % 10 == 0:
+                    results_logger.write('episode %f\n' % (self.local_episode_count))
+                    results_logger.flush()
+                for x_, a_, r_, reward_sum in self.run_episode():
+                    total_reward += reward_sum
+                    total_length += len(r_) + 1  # +1 for last frame that we drop
+                    self.training_q.put((x_, a_, r_))
+                    if self.local_episode_count % 10 == 0:
+                        results_logger.write('%.2f %.2f %.2f %.2f %.2f %.2f\n' %(x_[0][0], x_[0][1], x_[0][3], x_[0][4], x_[0][6], x_[0][7]))
+                        results_logger.flush()
+
+                self.local_episode_count += 1
+                with self.lock:
+                    self.global_episode_count.value = self.local_episode_count
+                rolling_reward += total_reward
+
+                if results_q.full():
+                    old_episode_time, old_reward, old_length = results_q.get()
+                    rolling_reward -= old_reward
+                    first_time = old_episode_time
+                results_q.put((datetime.now(), total_reward, total_length))
+
+                # if self.local_episode_count % Config.SAVE_FREQUENCY == 0:
+                #     self.model.save(self.local_episode_count)
+                #     print('running loc 3')
+
+                if self.local_episode_count % Config.PRINT_STATS_FREQUENCY == 0:
+                    print(
+                        '[Time: %8d Episode: %8d] '
+                        '[%s %s\'s Reward: %10.4f RRward: %10.4f] '
+                        % (int(time.time()-self.start_time), self.local_episode_count,
+                           self.role, self.id, total_reward, rolling_reward/results_q.qsize()))
+                    sys.stdout.flush()

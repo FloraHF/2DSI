@@ -40,6 +40,6 @@ class ThreadTrainer(Thread):
 
     def run(self):
         while not self.exit_flag:
-            x, a, y, r = self.player.training_q.get()
+            x, a, r = self.player.training_q.get()
             if Config.TRAIN_MODELS:
-                self.player.train_model(x, a, y, r)
+                self.player.train_model(x, a, r)

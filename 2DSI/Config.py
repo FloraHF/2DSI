@@ -33,7 +33,7 @@ class Config:
     # Game configuration
 
     # Time step size
-    TIME_STEP = 0.1
+    TIME_STEP = 0.2
 
     # The world boundary, as a square
     WORLD_X_BOUND = 10
@@ -59,8 +59,8 @@ class Config:
     DEFENDER_DYNAMIC = 'simple_motion'
     INTRUDER_DYNAMIC = 'simple_motion'
     # Action spaces
-    DEFENDER_ACTION_SPACE = np.arange(-math.pi, math.pi, .6)
-    INTRUDER_ACTION_SPACE = np.arange(-math.pi, math.pi, .6)
+    DEFENDER_ACTION_SPACE = [-math.pi, math.pi]
+    INTRUDER_ACTION_SPACE = [-math.pi, math.pi]
     # Maximum velocities
     DEFENDER_MAX_VELOCITY = 1
     INTRUDER_MAX_VELOCITY = 1.5
@@ -89,7 +89,7 @@ class Config:
 
     #########################################################################
     # Device
-    DEVICE = 'gpu:0'
+    DEVICE = '/cpu:0'
 
     #########################################################################
     # Algorithm parameters
@@ -164,7 +164,7 @@ class Config:
     RESULTS_FILENAME = 'results.txt'
     TRAJECTORY_FILENAME = 'trj_'
     # Network checkpoint name
-    NETWORK_NAME = 'network_'
+    NETWORK_NAME = ''
 
     #########################################################################
     # More experimental parameters here

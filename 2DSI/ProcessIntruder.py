@@ -1,15 +1,15 @@
 from Config import Config
 from ProcessPlayer import ProcessPlayer
 from Experience import Experience
-from NetworkAC import NetworkAC
+from NetworkHH import NetworkHH
 
 from multiprocessing import Value
 
 
 class ProcessIntruder(ProcessPlayer):
     """docstring for ProcessIntruder."""
-    def __init__(self, env, id, state, episode_log_q):
-        super(ProcessIntruder, self).__init__(env, id, state, episode_log_q)
+    def __init__(self, env, id, state, episode_count):
+        super(ProcessIntruder, self).__init__(env, id, state, episode_count)
 
         self.role = 'intruder'
 
@@ -17,7 +17,7 @@ class ProcessIntruder(ProcessPlayer):
         self.nb_actions = self.get_num_actions()
         self.vmax = Config.INTRUDER_MAX_VELOCITY
 
-        self.model = NetworkAC()
+        self.model = NetworkHH(Config.DEVICE, self.role+str(self.id), self.action_space)
 
         self.captured = Value('i', 0)
         self.entered = Value('i', 0)

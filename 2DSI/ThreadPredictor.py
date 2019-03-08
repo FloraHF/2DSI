@@ -44,6 +44,7 @@ class ThreadPredictor(Thread):
         while not self.exit_flag:
 
             state = self.player.prediction_q.get()
-            action, value = self.player.model.predict(state)
+            action = self.player.model.predict_a(state)
+            value  = self.player.model.predict_v(state)
 
             self.player.wait_q.put((action, value))
